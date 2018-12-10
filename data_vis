@@ -1,0 +1,15 @@
+plt.close('all')
+
+energy_filter = data['REAL CO2 Energy (mJ)'] > 1500
+pressure_filter = (data['Gas Pressure (abs bar)'] > 1) & (data['Gas Pressure (abs bar)'] < 1.25)
+time_delay_filter = data['Delay (ps)'] == 1.668
+
+total_filter = energy_filter & pressure_filter & time_delay_filter
+files = data[total_filter]
+
+for ind in files.index:
+    plt.figure(files['Shot #'].loc[ind])
+    plt.title(files['Shot #'].loc[ind])
+    plt.plot(waves[:,ind],lineouts[:,ind])
+    plt.xlabel('Wavelength (nm)')
+    plt.ylabel('Energy (J)')
