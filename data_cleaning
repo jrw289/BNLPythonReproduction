@@ -1,0 +1,92 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Jun 13 15:20:25 2018
+
+@author: Jake Welch
+"""
+
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image
+
+plt.close('all')
+
+#Import Excel sheet data 
+d = pd.ExcelFile('101216_EnergyShots.xlsx')
+data = d.parse()
+d.close()
+
+del data['Unnamed: 15']
+del data['Unnamed: 16']
+del data['Various Parameters @ Beginning']
+
+#Create a 3rd-order polynomial to fit the camera's wavelength calibration curve
+cal = pd.read_csv('CalibrationData.csv')
+cal_fun = np.polyfit(cal['Wavelength (nm)'],cal['QE (%)'],3)
+
+#Check how close predicted wavelengths are
+check_axis = np.linspace(470,600,num=100)
+check_vals = np.polyval(cal_fun,check_axis)
+
+#The image shows less than a percent difference, much less than the noise in the data
+plt.figure()
+plt.title('Measured Calibration Curve And Fit')
+plt.xlabel('Wavelength (nm)')
+plt.ylabel('QE (%)')
+plt.plot(cal['Wavelength (nm)'],cal['QE (%)'])
+plt.plot(check_axis,check_vals)
+
+#Collect the names of the image files
+#This number changes by day of the experiment, so this program is written
+#to adjust to whatever number it finds  
+files_in_dir = os.listdir()
+image_files = [s for s in files_in_dir if 'image' in s]
+
+#Defining constants for corrections 
+pix_per_nm = 27.687 #Calculated using the 101316 calibration shots 
+wave_offset = 17 #17 nm offset between spectrometer controller and actual wavelength
+amplifier_gain = 10.55 # camera parameter 
+h_c = 1.986446e-16 # h*c in J*nm
+
+#Saving the data in numpy arrays for simplicity of access later 
+raw_image_data = np.zeros([1024,1024,len(image_files)])
+waves = np.zeros([1024,len(image_files)])
+lineouts = np.zeros([1024,len(image_files)])
+corr_data = np.zeros([1024])
+wave_sep = np.arange(512,-512,-1)/pix_per_nm #Generating wavelength axis
+#They are descending in the image
+
+#Open the files, correct their wavelengths 
+for l,im in enumerate(image_files,1):
+    #Opening the image file
+    img = Image.open(im)
+    temp_img = np.array(img)
+    raw_image_data[:,:,l-1] = temp_img
+    
+    #Adjusting the wavelength based on the spectrometer wavelength setting
+    waves[:,l-1] = data['Wavelength (nm)'].iloc[l-1] - wave_offset + wave_sep
+    
+    #This correlation could be combined in the next step to save a little runtime
+    #but I split it to have one less thing to check in the long line
+    corr_data = 100/np.polyval(cal_fun,waves[:,l-1]) 
+    
+    #Calculate a background at each wavelength using nearby pixels, then sum data in 
+    #the range of useful pixels while correcting for camera changes to raw data. The
+    #output is in units of Joules 
+    for m in range(0,1024):
+        
+        temp_concat = np.concatenate([raw_image_data[m,100:200,l-1],raw_image_data[m,400:500,l-1]])
+        temp_norm = np.mean(temp_concat)
+        
+        for q in range(288,301):
+            lineouts[m,l-1] = lineouts[m,l-1] + (h_c/waves[m,l-1])*(raw_image_data[m,q,l-1] - temp_norm)*amplifier_gain*corr_data[m]/data['Avalanche Gain'].iloc[l-1]
+
+rel_vars = ['REAL CO2 Energy (mJ)','Gas Pressure (abs bar)','Delay (ps)']
+
+for el in rel_vars:
+    plt.figure()
+    temp = data[el].dropna()
+    plt.hist(temp)
+    plt.title(el)
